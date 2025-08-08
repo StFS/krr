@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import logging
 from datetime import datetime
+from multiprocessing.util import log_to_stderr
 from typing import List, Optional
 from uuid import UUID
 
@@ -36,6 +37,78 @@ logger = logging.getLogger("krr")
 @app.command(rich_help_panel="Utils")
 def version() -> None:
     typer.echo(get_version())
+
+
+@app.command(rich_help_panel="Utils")
+def report(
+    input_file: str = typer.Argument(..., help="Path to the JSON file containing the report data"),
+    format: str = typer.Option(
+        "table",
+        "--formatter",
+        "-f",
+        help=f"Output formatter ({', '.join(formatters.list_available())})",
+    ),
+    output_file: Optional[str] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Path to the output file. If not provided, output will be printed to console.",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Enable debug mode to show detailed error information",
+    ),
+) -> None:
+    """
+    Generate a formatted report from a JSON file using one of the available formatters.
+    
+    The JSON file should contain data in the same format as produced by the 'simple' command with the json formatter.
+    """
+    import json
+    import traceback
+    from robusta_krr.core.models.config import BaseConfig
+
+    config = BaseConfig(
+        show_cluster_name=True,
+        show_severity=True,
+        format=format,
+        log_to_stderr=False,
+    )
+    Config.set_config(config)
+    
+    try:
+        # Set up logging
+        if debug:
+            logging.basicConfig(level=logging.DEBUG)
+            logger = logging.getLogger("krr.report")
+            logger.debug(f"Reading input file: {input_file}")
+        
+        from robusta_krr.core.models.result import Result
+        result = Result.parse_file(input_file)
+
+        # Get the formatter
+        if debug:
+            logger.debug(f"Using formatter: {format}")
+        Formatter = formatters.find(format)
+        formatted = result.format(Formatter)
+        rich = getattr(Formatter, "__rich_console__", False)
+
+        from robusta_krr.core.runner import custom_print
+        custom_print(formatted, rich=rich, force=True)
+
+    except FileNotFoundError:
+        typer.echo(f"Error: Input file '{input_file}' not found", err=True)
+        raise typer.Exit(code=1)
+    except json.JSONDecodeError:
+        typer.echo(f"Error: '{input_file}' is not a valid JSON file", err=True)
+        raise typer.Exit(code=1)
+    except Exception as e:
+        typer.echo(f"Error: {str(e)}", err=True)
+        if debug:
+            typer.echo("\nDetailed error information:", err=True)
+            typer.echo(traceback.format_exc(), err=True)
+        raise typer.Exit(code=1)
 
 
 def __process_type(_T: type) -> type:
@@ -269,7 +342,7 @@ def load_commands() -> None:
                 slack_title: Optional[str] = typer.Option(
                     None,
                     "--slacktitle",
-                    help="Title of the slack message. If not provided, will use the default 'Kubernetes Resource Report for <environment>'.",
+                    help="Title of the slack message. If not provided, will use the default 'Kubernetes Resource Report for <namespaces>'.",
                     rich_help_panel="Output Settings",
                 ),
                 azureblob_output: Optional[str] = typer.Option(

@@ -16,11 +16,31 @@ from robusta_krr.core.models.objects import KindLiteral
 
 logger = logging.getLogger("krr")
 
-
-class Config(pd.BaseSettings):
+class BaseConfig(pd.BaseSettings):
     quiet: bool = pd.Field(False)
     verbose: bool = pd.Field(False)
 
+    # Logging Settings
+    format: str
+    show_cluster_name: bool
+
+    width: Optional[int] = pd.Field(None, ge=1)
+    show_severity: bool = True
+
+    log_to_stderr: bool
+
+    _logging_console: Optional[Console] = pd.PrivateAttr(None)
+
+
+    @property
+    def logging_console(self) -> Console:
+        if getattr(self, "_logging_console") is None:
+            self._logging_console = Console(file=sys.stderr if self.log_to_stderr else sys.stdout, width=self.width)
+        return self._logging_console
+
+
+
+class Config(BaseConfig):
     clusters: Union[list[str], Literal["*"], None] = None
     kubeconfig: Optional[str] = None
     impersonate_user: Optional[str] = None
@@ -52,13 +72,8 @@ class Config(pd.BaseSettings):
     # Threading settings
     max_workers: int = pd.Field(6, ge=1)
 
-    # Logging Settings
-    format: str
-    show_cluster_name: bool
+    # Strategy settings
     strategy: str
-    log_to_stderr: bool
-    width: Optional[int] = pd.Field(None, ge=1)
-    show_severity: bool = True
 
     # Publishing to url settings
     publish_scan_url: Optional[str] = pd.Field(None)
@@ -80,7 +95,6 @@ class Config(pd.BaseSettings):
 
     # Internal
     inside_cluster: bool = False
-    _logging_console: Optional[Console] = pd.PrivateAttr(None)
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -122,7 +136,7 @@ class Config(pd.BaseSettings):
 
     @pd.validator("resources", pre=True)
     def validate_resources(cls, v: Union[list[str], Literal["*"]]) -> Union[list[str], Literal["*"]]:
-        if v == []:
+        if v == [] or v=="*":
             return "*"
 
         # NOTE: KindLiteral.__args__ is a tuple of all possible values of KindLiteral
@@ -148,12 +162,6 @@ class Config(pd.BaseSettings):
     def context(self) -> Optional[str]:
         return self.clusters[0] if self.clusters != "*" and self.clusters else None
 
-    @property
-    def logging_console(self) -> Console:
-        if getattr(self, "_logging_console") is None:
-            self._logging_console = Console(file=sys.stderr if self.log_to_stderr else sys.stdout, width=self.width)
-        return self._logging_console
-
     def load_kubeconfig(self) -> None:
         try:
             config.load_kube_config(config_file=self.kubeconfig, context=self.context)
@@ -175,7 +183,7 @@ class Config(pd.BaseSettings):
         return api_client
 
     @staticmethod
-    def set_config(config: Config) -> None:
+    def set_config(config: BaseConfig) -> None:
         global _config
 
         _config = config
